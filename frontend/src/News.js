@@ -1,48 +1,15 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import './News.css';
 
 const News = () => {
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [likedArticles, setLikedArticles] = useState(new Set());
-
-  // Sample news data
-  const newsData = [
-    {
-      id: 1,
-      title: "New AI Breakthrough in 2024",
-      excerpt: "Revolutionary advances in artificial intelligence are changing how we live and work...",
-      category: "technology",
-      author: "John Smith",
-      publishTime: "2 hours ago",
-      readTime: "5 min read",
-      views: 1250,
-      image: "https://images.unsplash.com/photo-1485827404703-89b55fcc595e?w=400&h=250&fit=crop",
-      featured: true
-    },
-    {
-      id: 2,
-      title: "Global Markets Show Strong Growth",
-      excerpt: "Major stock markets worldwide reach new heights with record trading volumes...",
-      category: "business",
-      author: "Sarah Johnson",
-      publishTime: "4 hours ago",
-      readTime: "3 min read",
-      views: 890,
-      image: "https://images.unsplash.com/photo-1611974789855-9c2a0a7236a3?w=400&h=250&fit=crop"
-    },
-    {
-      id: 3,
-      title: "Sports Championship Finals Set",
-      excerpt: "Top teams prepare for the biggest championship match of the season...",
-      category: "sports",
-      author: "Mike Wilson",
-      publishTime: "6 hours ago",
-      readTime: "4 min read",
-      views: 2100,
-      image: "https://images.unsplash.com/photo-1574629810360-7efbbe195018?w=400&h=250&fit=crop"
-    }
-  ];
+  const [newsData, setNewsData] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
 
   const categories = [
     { id: 'all', name: 'All', color: 'bg-blue-500' },
@@ -53,15 +20,42 @@ const News = () => {
     { id: 'entertainment', name: 'Entertainment', color: 'bg-teal-500' }
   ];
 
+  useEffect(() => {
+    const fetchNews = async () => {
+      try {
+        const response = await fetch(`http://localhost:5000/api/news?page=${currentPage}&limit=10`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch news');
+        }
+        const data = await response.json();
+        
+        // Validate that data has the expected structure
+        if (!data.news || !Array.isArray(data.news)) {
+          throw new Error('Invalid data format received from server');
+        }
+        
+        setNewsData(data.news);
+        setTotalPages(data.totalPages);
+        setLoading(false);
+      } catch (err) {
+        console.error('Error fetching news:', err);
+        setError(err.message);
+        setLoading(false);
+      }
+    };
+
+    fetchNews();
+  }, [currentPage]);
+
   // Filter news by category and search
-  const filteredNews = newsData.filter(article => {
+  const filteredNews = Array.isArray(newsData) ? newsData.filter(article => {
     const matchesCategory = selectedCategory === 'all' || article.category === selectedCategory;
     const matchesSearch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          article.excerpt.toLowerCase().includes(searchTerm.toLowerCase());
     return matchesCategory && matchesSearch;
-  });
+  }) : [];
 
-  const featuredNews = newsData.filter(article => article.featured);
+  const featuredNews = Array.isArray(newsData) ? newsData.filter(article => article.featured) : [];
   const regularNews = filteredNews.filter(article => !article.featured);
 
   const handleLike = (articleId) => {
@@ -78,6 +72,28 @@ const News = () => {
     const cat = categories.find(c => c.id === category);
     return cat ? cat.color : 'bg-gray-500';
   };
+
+  const handlePageChange = (newPage) => {
+    setCurrentPage(newPage);
+  };
+
+  if (loading) {
+    return (
+      <div className="loading-container">
+        <div className="loading-spinner"></div>
+        <p>Loading news...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="error-container">
+        <p>Error: {error}</p>
+        <button onClick={() => window.location.reload()}>Retry</button>
+      </div>
+    );
+  }
 
   return (
     <div className="news-container">
@@ -111,7 +127,7 @@ const News = () => {
           <h2>Featured News</h2>
           <div className="featured-grid">
             {featuredNews.map(article => (
-              <div key={article.id} className="news-card featured">
+              <div key={article._id} className="news-card featured">
                 <img src={article.image} alt={article.title} />
                 <div className="news-content">
                   <span className={`category-tag ${getCategoryColor(article.category)}`}>
@@ -121,14 +137,14 @@ const News = () => {
                   <p>{article.excerpt}</p>
                   <div className="news-meta">
                     <span>{article.author}</span>
-                    <span>{article.publishTime}</span>
+                    <span>{new Date(article.publishTime).toLocaleDateString()}</span>
                     <span>{article.views} views</span>
                   </div>
                   <button 
-                    className={`like-button ${likedArticles.has(article.id) ? 'liked' : ''}`}
-                    onClick={() => handleLike(article.id)}
+                    className={`like-button ${likedArticles.has(article._id) ? 'liked' : ''}`}
+                    onClick={() => handleLike(article._id)}
                   >
-                    {likedArticles.has(article.id) ? '❤️' : '🤍'}
+                    {likedArticles.has(article._id) ? '❤️' : '🤍'}
                   </button>
                 </div>
               </div>
@@ -142,7 +158,7 @@ const News = () => {
         <h2>Latest News</h2>
         <div className="news-grid">
           {regularNews.map(article => (
-            <div key={article.id} className="news-card">
+            <div key={article._id} className="news-card">
               <img src={article.image} alt={article.title} />
               <div className="news-content">
                 <span className={`category-tag ${getCategoryColor(article.category)}`}>
@@ -152,20 +168,43 @@ const News = () => {
                 <p>{article.excerpt}</p>
                 <div className="news-meta">
                   <span>{article.author}</span>
-                  <span>{article.publishTime}</span>
+                  <span>{new Date(article.publishTime).toLocaleDateString()}</span>
                   <span>{article.views} views</span>
                 </div>
                 <button 
-                  className={`like-button ${likedArticles.has(article.id) ? 'liked' : ''}`}
-                  onClick={() => handleLike(article.id)}
+                  className={`like-button ${likedArticles.has(article._id) ? 'liked' : ''}`}
+                  onClick={() => handleLike(article._id)}
                 >
-                  {likedArticles.has(article.id) ? '❤️' : '🤍'}
+                  {likedArticles.has(article._id) ? '❤️' : '🤍'}
                 </button>
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Pagination */}
+      {totalPages > 1 && (
+        <div className="pagination">
+          <button 
+            onClick={() => handlePageChange(currentPage - 1)}
+            disabled={currentPage === 1}
+            className="pagination-button"
+          >
+            Previous
+          </button>
+          <span className="pagination-info">
+            Page {currentPage} of {totalPages}
+          </span>
+          <button 
+            onClick={() => handlePageChange(currentPage + 1)}
+            disabled={currentPage === totalPages}
+            className="pagination-button"
+          >
+            Next
+          </button>
+        </div>
+      )}
     </div>
   );
 };

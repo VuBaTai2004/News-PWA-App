@@ -15,14 +15,25 @@ const newsSchema = new mongoose.Schema({
     required: true
   },
   category: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Category',
-    required: true
+    type: String,
+    required: true,
+    enum: ['technology', 'business', 'sports', 'health', 'entertainment']
   },
   author: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
+    type: String,
     required: true
+  },
+  publishTime: {
+    type: String,
+    required: true
+  },
+  readTime: {
+    type: String,
+    required: true
+  },
+  views: {
+    type: Number,
+    default: 0
   },
   image: {
     type: String,
@@ -31,10 +42,6 @@ const newsSchema = new mongoose.Schema({
   featured: {
     type: Boolean,
     default: false
-  },
-  views: {
-    type: Number,
-    default: 0
   },
   likes: [{
     type: mongoose.Schema.Types.ObjectId,

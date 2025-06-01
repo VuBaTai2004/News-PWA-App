@@ -11,16 +11,23 @@ router.get('/', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
+    const category = req.query.category;
+    const search = req.query.search;
 
-    const news = await News.find()
+    let query = {};
+    if (category) {
+      query.category = category;
+    }
+    if (search) {
+      query.$text = { $search: search };
+    }
+
+    const news = await News.find(query)
       .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate('category', 'name color')
-      .populate('author', 'name avatar');
+      .skip((page - 1) * limit)
+      .limit(limit);
 
-    const total = await News.countDocuments();
+    const total = await News.countDocuments(query);
 
     res.json({
       news,
@@ -29,8 +36,34 @@ router.get('/', async (req, res) => {
       totalNews: total
     });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// @route   GET api/news/featured
+// @desc    Get featured news articles
+// @access  Public
+router.get('/featured', async (req, res) => {
+  try {
+    const featuredNews = await News.find({ featured: true })
+      .sort({ createdAt: -1 })
+      .limit(5);
+    res.json(featuredNews);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// @route   GET api/news/category/:category
+// @desc    Get news articles by category
+// @access  Public
+router.get('/category/:category', async (req, res) => {
+  try {
+    const news = await News.find({ category: req.params.category })
+      .sort({ createdAt: -1 });
+    res.json(news);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -45,7 +78,7 @@ router.get('/:id', async (req, res) => {
       .populate('comments.user', 'name avatar');
 
     if (!news) {
-      return res.status(404).json({ msg: 'News article not found' });
+      return res.status(404).json({ message: 'News not found' });
     }
 
     // Increment views
@@ -54,11 +87,7 @@ router.get('/:id', async (req, res) => {
 
     res.json(news);
   } catch (err) {
-    console.error(err.message);
-    if (err.kind === 'ObjectId') {
-      return res.status(404).json({ msg: 'News article not found' });
-    }
-    res.status(500).send('Server Error');
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -93,23 +122,21 @@ router.post('/', [
       author: req.user.id
     });
 
-    await news.save();
-    res.json(news);
+    const newNews = await news.save();
+    res.status(201).json(newNews);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(400).json({ message: err.message });
   }
 });
 
 // @route   PUT api/news/:id
 // @desc    Update a news article
 // @access  Private (Author/Admin only)
-router.put('/:id', auth, async (req, res) => {
+router.patch('/:id', auth, async (req, res) => {
   try {
     const news = await News.findById(req.params.id);
-
     if (!news) {
-      return res.status(404).json({ msg: 'News article not found' });
+      return res.status(404).json({ message: 'News not found' });
     }
 
     // Check if user is the author or admin
@@ -117,21 +144,14 @@ router.put('/:id', auth, async (req, res) => {
       return res.status(401).json({ msg: 'Not authorized' });
     }
 
-    const { title, excerpt, content, category, image, featured } = req.body;
+    Object.keys(req.body).forEach(key => {
+      news[key] = req.body[key];
+    });
 
-    // Update fields
-    if (title) news.title = title;
-    if (excerpt) news.excerpt = excerpt;
-    if (content) news.content = content;
-    if (category) news.category = category;
-    if (image) news.image = image;
-    if (featured !== undefined) news.featured = featured;
-
-    await news.save();
-    res.json(news);
+    const updatedNews = await news.save();
+    res.json(updatedNews);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(400).json({ message: err.message });
   }
 });
 
@@ -141,9 +161,8 @@ router.put('/:id', auth, async (req, res) => {
 router.delete('/:id', auth, async (req, res) => {
   try {
     const news = await News.findById(req.params.id);
-
     if (!news) {
-      return res.status(404).json({ msg: 'News article not found' });
+      return res.status(404).json({ message: 'News not found' });
     }
 
     // Check if user is the author or admin
@@ -152,51 +171,58 @@ router.delete('/:id', auth, async (req, res) => {
     }
 
     await news.remove();
-    res.json({ msg: 'News article removed' });
+    res.json({ message: 'News deleted' });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   PUT api/news/like/:id
-// @desc    Like/Unlike a news article
+// @route   POST api/news/:id/view
+// @desc    Increment views for a news article
 // @access  Private
-router.put('/like/:id', auth, async (req, res) => {
+router.post('/:id/view', async (req, res) => {
   try {
     const news = await News.findById(req.params.id);
-
     if (!news) {
-      return res.status(404).json({ msg: 'News article not found' });
+      return res.status(404).json({ message: 'News not found' });
     }
 
-    // Check if the article has already been liked by this user
-    const likeIndex = news.likes.indexOf(req.user.id);
-    if (likeIndex > -1) {
-      // Unlike
-      news.likes.splice(likeIndex, 1);
+    news.views += 1;
+    await news.save();
+    res.json({ views: news.views });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// @route   POST api/news/:id/like
+// @desc    Toggle like for a news article
+// @access  Private
+router.post('/:id/like', auth, async (req, res) => {
+  try {
+    const news = await News.findById(req.params.id);
+    if (!news) {
+      return res.status(404).json({ message: 'News not found' });
+    }
+
+    const likeIndex = news.likes.indexOf(req.user._id);
+    if (likeIndex === -1) {
+      news.likes.push(req.user._id);
     } else {
-      // Like
-      news.likes.push(req.user.id);
+      news.likes.splice(likeIndex, 1);
     }
 
     await news.save();
-    res.json(news.likes);
+    res.json({ likes: news.likes });
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ message: err.message });
   }
 });
 
-// @route   POST api/news/comment/:id
-// @desc    Comment on a news article
+// @route   POST api/news/:id/comment
+// @desc    Add a comment to a news article
 // @access  Private
-router.post('/comment/:id', [
-  auth,
-  [
-    check('text', 'Text is required').not().isEmpty()
-  ]
-], async (req, res) => {
+router.post('/:id/comment', auth, async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -204,22 +230,19 @@ router.post('/comment/:id', [
 
   try {
     const news = await News.findById(req.params.id);
-
     if (!news) {
-      return res.status(404).json({ msg: 'News article not found' });
+      return res.status(404).json({ message: 'News not found' });
     }
 
-    const newComment = {
-      text: req.body.text,
-      user: req.user.id
-    };
+    news.comments.push({
+      user: req.user._id,
+      text: req.body.text
+    });
 
-    news.comments.unshift(newComment);
     await news.save();
     res.json(news.comments);
   } catch (err) {
-    console.error(err.message);
-    res.status(500).send('Server Error');
+    res.status(500).json({ message: err.message });
   }
 });
 

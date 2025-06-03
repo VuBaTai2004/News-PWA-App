@@ -25,6 +25,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/news-app'
 app.use('/api/news', require('./routes/news'));
 app.use('/api/categories', require('./routes/categories'));
 app.use('/api/auth', require('./routes/auth'));
+app.use('/api/notifications', require('./routes/notifications'));
 
 // Error handling middleware
 app.use((err, req, res, next) => {

@@ -35,6 +35,10 @@ const newsSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  likes: {
+    type: Number,
+    default: 0
+  },
   image: {
     type: String,
     required: true
@@ -43,15 +47,7 @@ const newsSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  likes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  }],
   comments: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
     text: {
       type: String,
       required: true

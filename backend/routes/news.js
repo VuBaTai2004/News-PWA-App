@@ -3,37 +3,30 @@ const router = express.Router();
 const { check, validationResult } = require('express-validator');
 const auth = require('../middleware/auth');
 const News = require('../models/News');
+const mongoose = require('mongoose');
 
 // @route   GET api/news
-// @desc    Get all news articles with pagination
+// @desc    Get all news articles
 // @access  Public
 router.get('/', async (req, res) => {
   try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
     const category = req.query.category;
     const search = req.query.search;
 
     let query = {};
     if (category) {
-      query.category = category;
+      query.category = category.toLowerCase();
     }
     if (search) {
       query.$text = { $search: search };
     }
 
     const news = await News.find(query)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit);
-
-    const total = await News.countDocuments(query);
+      .sort({ createdAt: -1 });
 
     res.json({
       news,
-      currentPage: page,
-      totalPages: Math.ceil(total / limit),
-      totalNews: total
+      totalNews: news.length
     });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -72,20 +65,52 @@ router.get('/category/:category', async (req, res) => {
 // @access  Public
 router.get('/:id', async (req, res) => {
   try {
-    const news = await News.findById(req.params.id)
-      .populate('category', 'name color')
-      .populate('author', 'name avatar')
-      .populate('comments.user', 'name avatar');
+    const { id } = req.params;
+    console.log('Fetching article with ID:', id);
+    
+    // Validate ID format
+    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+      console.log('Invalid ID format:', id);
+      return res.status(400).json({ message: 'Invalid article ID format' });
+    }
 
+    console.log('Attempting to find article in database...');
+    const news = await News.findById(id);
+    console.log('Database query result:', news ? 'Article found' : 'Article not found');
+
+    if (!news) {
+      return res.status(404).json({ message: 'News article not found' });
+    }
+
+    res.json(news);
+  } catch (err) {
+    console.error('Detailed error in GET /:id:', {
+      error: err,
+      message: err.message,
+      stack: err.stack,
+      name: err.name
+    });
+    res.status(500).json({ 
+      message: 'Error fetching article',
+      error: err.message,
+      type: err.name
+    });
+  }
+});
+
+// @route   GET api/news/:id/comments
+// @desc    Get comments for a news article
+// @access  Public
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const news = await News.findById(req.params.id);
     if (!news) {
       return res.status(404).json({ message: 'News not found' });
     }
 
-    // Increment views
-    news.views += 1;
-    await news.save();
-
-    res.json(news);
+    // Sort comments by date, newest first
+    const sortedComments = news.comments.sort((a, b) => b.createdAt - a.createdAt);
+    res.json(sortedComments);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -196,33 +221,55 @@ router.post('/:id/view', async (req, res) => {
 });
 
 // @route   POST api/news/:id/like
-// @desc    Toggle like for a news article
-// @access  Private
-router.post('/:id/like', auth, async (req, res) => {
+// @desc    Like/Unlike a news article
+// @access  Public
+router.post('/:id/like', async (req, res) => {
   try {
     const news = await News.findById(req.params.id);
     if (!news) {
       return res.status(404).json({ message: 'News not found' });
     }
 
-    const likeIndex = news.likes.indexOf(req.user._id);
-    if (likeIndex === -1) {
-      news.likes.push(req.user._id);
-    } else {
-      news.likes.splice(likeIndex, 1);
-    }
-
+    // Increment likes
+    news.likes += 1;
     await news.save();
+
     res.json({ likes: news.likes });
   } catch (err) {
+    console.error('Error updating likes:', err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// @route   POST api/news/:id/unlike
+// @desc    Unlike a news article
+// @access  Public
+router.post('/:id/unlike', async (req, res) => {
+  try {
+    const news = await News.findById(req.params.id);
+    if (!news) {
+      return res.status(404).json({ message: 'News not found' });
+    }
+
+    // Decrement likes (but not below 0)
+    if (news.likes > 0) {
+      news.likes -= 1;
+      await news.save();
+    }
+
+    res.json({ likes: news.likes });
+  } catch (err) {
+    console.error('Error updating likes:', err);
     res.status(500).json({ message: err.message });
   }
 });
 
 // @route   POST api/news/:id/comment
 // @desc    Add a comment to a news article
-// @access  Private
-router.post('/:id/comment', auth, async (req, res) => {
+// @access  Public
+router.post('/:id/comment', [
+  check('text', 'Comment text is required').not().isEmpty()
+], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.status(400).json({ errors: errors.array() });
@@ -234,16 +281,48 @@ router.post('/:id/comment', auth, async (req, res) => {
       return res.status(404).json({ message: 'News not found' });
     }
 
-    news.comments.push({
-      user: req.user._id,
-      text: req.body.text
-    });
+    const newComment = {
+      text: req.body.text,
+      createdAt: new Date()
+    };
 
+    news.comments.push(newComment);
     await news.save();
-    res.json(news.comments);
+
+    res.json(newComment);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
 });
 
-module.exports = router; 
+// @route   GET api/news/health
+// @desc    Check database connection health
+// @access  Public
+router.get('/health', async (req, res) => {
+  try {
+    // Check MongoDB connection
+    const state = mongoose.connection.readyState;
+    const states = {
+      0: 'disconnected',
+      1: 'connected',
+      2: 'connecting',
+      3: 'disconnecting'
+    };
+    
+    res.json({
+      status: 'ok',
+      database: {
+        state: states[state],
+        readyState: state
+      }
+    });
+  } catch (err) {
+    console.error('Health check error:', err);
+    res.status(500).json({
+      status: 'error',
+      message: err.message
+    });
+  }
+});
+
+module.exports = router;

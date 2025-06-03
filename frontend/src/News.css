@@ -5,23 +5,25 @@
 }
 
 .search-container {
-  margin-bottom: 20px;
+  position: relative;
+  max-width: 600px;
+  margin: 20px auto;
+  padding: 0 20px;
 }
 
 .search-input {
   width: 100%;
-  max-width: 600px;
   padding: 12px 20px;
-  border: 2px solid #e2e8f0;
+  font-size: 1rem;
+  border: 2px solid #e0e0e0;
   border-radius: 8px;
-  font-size: 16px;
-  transition: all 0.3s ease;
+  transition: border-color 0.3s, box-shadow 0.3s;
 }
 
 .search-input:focus {
   outline: none;
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+  border-color: #007bff;
+  box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
 }
 
 .categories-container {
@@ -82,13 +84,14 @@
   background: white;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  cursor: pointer;
 }
 
 .news-card:hover {
   transform: translateY(-4px);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
 }
 
 .news-card img {
@@ -112,7 +115,7 @@
   border-radius: 16px;
   font-size: 12px;
   font-weight: 600;
-  color: white;
+  color: black;
   margin-bottom: 12px;
 }
 
@@ -141,14 +144,15 @@
 
 .like-button {
   position: absolute;
-  bottom: 20px;
-  right: 20px;
+  bottom: 16px;
+  right: 16px;
   background: none;
   border: none;
+  font-size: 1.2rem;
   cursor: pointer;
-  font-size: 20px;
   padding: 4px;
   transition: transform 0.2s ease;
+  z-index: 2;
 }
 
 .like-button:hover {
@@ -266,4 +270,53 @@
 .pagination-info {
   font-size: 1rem;
   color: #4b5563;
+}
+
+.offline-banner {
+  background-color: #fef3c7;
+  color: #92400e;
+  padding: 12px 20px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  text-align: center;
+  font-weight: 500;
+  animation: slideDown 0.3s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    transform: translateY(-100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.article-meta {
+  display: flex;
+  gap: 1rem;
+  color: #666;
+  font-size: 0.9rem;
+  margin-top: 1rem;
+}
+
+.article-meta span {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.article-meta .author {
+  font-weight: 600;
+  color: #333;
+}
+
+.article-meta .likes {
+  color: #ff4d4d;
+}
+
+.article-meta .likes::before {
+  content: '❤️';
 } 

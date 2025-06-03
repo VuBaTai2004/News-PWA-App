@@ -1,15 +1,20 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { newsDB } from './services/db';
+import { notificationService } from './services/notificationService';
+import SearchSuggestions from './components/SearchSuggestions';
 import './News.css';
 
 const News = () => {
+  const navigate = useNavigate();
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [likedArticles, setLikedArticles] = useState(new Set());
   const [newsData, setNewsData] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [totalPages, setTotalPages] = useState(1);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [searchSuggestions, setSearchSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
 
   const categories = [
     { id: 'all', name: 'All', color: 'bg-blue-500' },
@@ -20,22 +25,93 @@ const News = () => {
     { id: 'entertainment', name: 'Entertainment', color: 'bg-teal-500' }
   ];
 
+  // Debounced search function
+  const debouncedSearch = useCallback((term) => {
+    if (!term.trim()) {
+      setSearchSuggestions([]);
+      return;
+    }
+
+    const searchTermLower = term.toLowerCase();
+    const suggestions = newsData.filter(article => 
+      article.title.toLowerCase().includes(searchTermLower) ||
+      article.category.toLowerCase().includes(searchTermLower)
+    ).slice(0, 5); // Limit to 5 suggestions
+
+    setSearchSuggestions(suggestions);
+  }, [newsData]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      debouncedSearch(searchTerm);
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, debouncedSearch]);
+
+  useEffect(() => {
+    // Initialize IndexedDB and request notification permission
+    const initServices = async () => {
+      try {
+        await newsDB.init();
+        
+        // Initialize notification service
+        const isSupported = await notificationService.init();
+        if (isSupported) {
+          const hasPermission = await notificationService.requestPermission();
+          if (hasPermission) {
+            await notificationService.subscribeToPush();
+          }
+        }
+      } catch (error) {
+        console.error('Error initializing services:', error);
+      }
+    };
+
+    initServices();
+
+    // Handle online/offline status
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   useEffect(() => {
     const fetchNews = async () => {
       try {
-        const response = await fetch(`http://localhost:5000/api/news?page=${currentPage}&limit=10`);
+        if (isOffline) {
+          // Load from IndexedDB when offline
+          const cachedArticles = await newsDB.getAllArticles();
+          setNewsData(cachedArticles);
+          setLoading(false);
+          return;
+        }
+
+        const response = await fetch(
+          `http://localhost:5000/api/news${selectedCategory !== 'all' ? `?category=${selectedCategory}` : ''}`
+        );
+        
         if (!response.ok) {
           throw new Error('Failed to fetch news');
         }
+        
         const data = await response.json();
         
-        // Validate that data has the expected structure
         if (!data.news || !Array.isArray(data.news)) {
           throw new Error('Invalid data format received from server');
         }
         
+        // Cache the articles in IndexedDB
+        await newsDB.saveArticles(data.news);
+        
         setNewsData(data.news);
-        setTotalPages(data.totalPages);
         setLoading(false);
       } catch (err) {
         console.error('Error fetching news:', err);
@@ -45,36 +121,44 @@ const News = () => {
     };
 
     fetchNews();
-  }, [currentPage]);
+  }, [selectedCategory, isOffline]);
 
-  // Filter news by category and search
+  const handleSearchChange = (e) => {
+    setSearchTerm(e.target.value);
+    setShowSuggestions(true);
+  };
+
+  const handleSuggestionSelect = (article) => {
+    setSearchTerm('');
+    setShowSuggestions(false);
+    setSearchSuggestions([]);
+  };
+
+  const handleSuggestionClose = () => {
+    setShowSuggestions(false);
+  };
+
+  // Filter news by search only (category filtering is now handled by the API)
   const filteredNews = Array.isArray(newsData) ? newsData.filter(article => {
-    const matchesCategory = selectedCategory === 'all' || article.category === selectedCategory;
     const matchesSearch = article.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          article.excerpt.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
+    return matchesSearch;
   }) : [];
 
   const featuredNews = Array.isArray(newsData) ? newsData.filter(article => article.featured) : [];
   const regularNews = filteredNews.filter(article => !article.featured);
-
-  const handleLike = (articleId) => {
-    const newLikedArticles = new Set(likedArticles);
-    if (newLikedArticles.has(articleId)) {
-      newLikedArticles.delete(articleId);
-    } else {
-      newLikedArticles.add(articleId);
-    }
-    setLikedArticles(newLikedArticles);
-  };
 
   const getCategoryColor = (category) => {
     const cat = categories.find(c => c.id === category);
     return cat ? cat.color : 'bg-gray-500';
   };
 
-  const handlePageChange = (newPage) => {
-    setCurrentPage(newPage);
+  const handleCategoryChange = (categoryId) => {
+    setSelectedCategory(categoryId);
+  };
+
+  const handleArticleClick = (articleId) => {
+    navigate(`/article/${articleId}`);
   };
 
   if (loading) {
@@ -97,6 +181,12 @@ const News = () => {
 
   return (
     <div className="news-container">
+      {isOffline && (
+        <div className="offline-banner">
+          You are currently offline. Showing cached content.
+        </div>
+      )}
+      
       {/* Search Bar */}
       <div className="search-container">
         <input
@@ -104,8 +194,16 @@ const News = () => {
           placeholder="Search news..."
           className="search-input"
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={handleSearchChange}
+          onFocus={() => setShowSuggestions(true)}
         />
+        {showSuggestions && (
+          <SearchSuggestions
+            suggestions={searchSuggestions}
+            onSelect={handleSuggestionSelect}
+            onClose={handleSuggestionClose}
+          />
+        )}
       </div>
 
       {/* Category Filter */}
@@ -113,7 +211,7 @@ const News = () => {
         {categories.map(category => (
           <button
             key={category.id}
-            onClick={() => setSelectedCategory(category.id)}
+            onClick={() => handleCategoryChange(category.id)}
             className={`category-button ${selectedCategory === category.id ? 'active' : ''}`}
           >
             {category.name}
@@ -127,7 +225,11 @@ const News = () => {
           <h2>Featured News</h2>
           <div className="featured-grid">
             {featuredNews.map(article => (
-              <div key={article._id} className="news-card featured">
+              <div 
+                key={article._id} 
+                className="news-card featured"
+                onClick={() => handleArticleClick(article._id)}
+              >
                 <img src={article.image} alt={article.title} />
                 <div className="news-content">
                   <span className={`category-tag ${getCategoryColor(article.category)}`}>
@@ -135,17 +237,15 @@ const News = () => {
                   </span>
                   <h3>{article.title}</h3>
                   <p>{article.excerpt}</p>
-                  <div className="news-meta">
-                    <span>{article.author}</span>
-                    <span>{new Date(article.publishTime).toLocaleDateString()}</span>
-                    <span>{article.views} views</span>
+                  <div className="article-meta">
+                    <span className="author">By {article.author}</span>
+                    <span className="date">
+                      {new Date(article.publishTime).toLocaleDateString()}
+                    </span>
+                    <span className="read-time">{article.readTime}</span>
+                    <span className="views">{article.views} views</span>
+                    <span className="likes">{article.likes} likes</span>
                   </div>
-                  <button 
-                    className={`like-button ${likedArticles.has(article._id) ? 'liked' : ''}`}
-                    onClick={() => handleLike(article._id)}
-                  >
-                    {likedArticles.has(article._id) ? '❤️' : '🤍'}
-                  </button>
                 </div>
               </div>
             ))}
@@ -155,10 +255,14 @@ const News = () => {
 
       {/* Regular News */}
       <div className="regular-news">
-        <h2>Latest News</h2>
+        <h2>{selectedCategory === 'all' ? 'Latest News' : `${categories.find(c => c.id === selectedCategory)?.name} News`}</h2>
         <div className="news-grid">
           {regularNews.map(article => (
-            <div key={article._id} className="news-card">
+            <div 
+              key={article._id} 
+              className="news-card"
+              onClick={() => handleArticleClick(article._id)}
+            >
               <img src={article.image} alt={article.title} />
               <div className="news-content">
                 <span className={`category-tag ${getCategoryColor(article.category)}`}>
@@ -166,45 +270,20 @@ const News = () => {
                 </span>
                 <h3>{article.title}</h3>
                 <p>{article.excerpt}</p>
-                <div className="news-meta">
-                  <span>{article.author}</span>
-                  <span>{new Date(article.publishTime).toLocaleDateString()}</span>
-                  <span>{article.views} views</span>
+                <div className="article-meta">
+                  <span className="author">By {article.author}</span>
+                  <span className="date">
+                    {new Date(article.publishTime).toLocaleDateString()}
+                  </span>
+                  <span className="read-time">{article.readTime}</span>
+                  <span className="views">{article.views} views</span>
+                  <span className="likes">{article.likes} likes</span>
                 </div>
-                <button 
-                  className={`like-button ${likedArticles.has(article._id) ? 'liked' : ''}`}
-                  onClick={() => handleLike(article._id)}
-                >
-                  {likedArticles.has(article._id) ? '❤️' : '🤍'}
-                </button>
               </div>
             </div>
           ))}
         </div>
       </div>
-
-      {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="pagination">
-          <button 
-            onClick={() => handlePageChange(currentPage - 1)}
-            disabled={currentPage === 1}
-            className="pagination-button"
-          >
-            Previous
-          </button>
-          <span className="pagination-info">
-            Page {currentPage} of {totalPages}
-          </span>
-          <button 
-            onClick={() => handlePageChange(currentPage + 1)}
-            disabled={currentPage === totalPages}
-            className="pagination-button"
-          >
-            Next
-          </button>
-        </div>
-      )}
     </div>
   );
 };

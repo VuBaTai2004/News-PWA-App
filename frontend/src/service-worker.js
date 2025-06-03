@@ -11,7 +11,7 @@ import { clientsClaim } from 'workbox-core';
 import { ExpirationPlugin } from 'workbox-expiration';
 import { precacheAndRoute, createHandlerBoundToURL } from 'workbox-precaching';
 import { registerRoute } from 'workbox-routing';
-import { StaleWhileRevalidate } from 'workbox-strategies';
+import { StaleWhileRevalidate, CacheFirst } from 'workbox-strategies';
 
 clientsClaim();
 
@@ -20,6 +20,34 @@ clientsClaim();
 // This variable must be present somewhere in your service worker file,
 // even if you decide not to use precaching. See https://cra.link/PWA
 precacheAndRoute(self.__WB_MANIFEST);
+
+// Cache API responses
+registerRoute(
+  ({ url }) => url.origin === 'http://localhost:5000' && url.pathname.startsWith('/api/'),
+  new StaleWhileRevalidate({
+    cacheName: 'api-cache',
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 100,
+        maxAgeSeconds: 24 * 60 * 60, // 24 hours
+      }),
+    ],
+  })
+);
+
+// Cache images
+registerRoute(
+  ({ url }) => url.origin === 'http://localhost:5000' && url.pathname.match(/\.(?:png|jpg|jpeg|svg|gif)$/),
+  new CacheFirst({
+    cacheName: 'images',
+    plugins: [
+      new ExpirationPlugin({
+        maxEntries: 60,
+        maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+      }),
+    ],
+  })
+);
 
 // Set up App Shell-style routing, so that all navigation requests
 // are fulfilled with your index.html shell. Learn more at
@@ -46,20 +74,16 @@ registerRoute(
   createHandlerBoundToURL(process.env.PUBLIC_URL + '/index.html')
 );
 
-// An example runtime caching route for requests that aren't handled by the
-// precache, in this case same-origin .png requests like those from in public/
-registerRoute(
-  // Add in any other file extensions or routing criteria as needed.
-  ({ url }) => url.origin === self.location.origin && url.pathname.endsWith('.png'), // Customize this strategy as needed, e.g., by changing to CacheFirst.
-  new StaleWhileRevalidate({
-    cacheName: 'images',
-    plugins: [
-      // Ensure that once this runtime cache reaches a maximum size the
-      // least-recently used images are removed.
-      new ExpirationPlugin({ maxEntries: 50 }),
-    ],
-  })
-);
+// Handle offline fallback
+self.addEventListener('fetch', (event) => {
+  if (event.request.mode === 'navigate') {
+    event.respondWith(
+      fetch(event.request).catch(() => {
+        return caches.match('/index.html');
+      })
+    );
+  }
+});
 
 // This allows the web app to trigger skipWaiting via
 // registration.waiting.postMessage({type: 'SKIP_WAITING'})
@@ -68,5 +92,153 @@ self.addEventListener('message', (event) => {
     self.skipWaiting();
   }
 });
+
+// Cache name
+const CACHE_NAME = 'news-app-cache-v1';
+
+// Files to cache
+const urlsToCache = [
+  '/',
+  '/index.html',
+  '/static/js/main.chunk.js',
+  '/static/js/0.chunk.js',
+  '/static/js/bundle.js',
+  '/manifest.json',
+  '/logo192.png',
+  '/logo512.png'
+];
+
+// Install event - cache files
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => {
+        console.log('Opened cache');
+        return cache.addAll(urlsToCache);
+      })
+  );
+});
+
+// Activate event - clean up old caches
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    caches.keys().then(cacheNames => {
+      return Promise.all(
+        cacheNames.map(cacheName => {
+          if (cacheName !== CACHE_NAME) {
+            return caches.delete(cacheName);
+          }
+        })
+      );
+    })
+  );
+});
+
+// Fetch event - serve from cache, fall back to network
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => {
+        if (response) {
+          return response;
+        }
+        return fetch(event.request)
+          .then(response => {
+            // Check if we received a valid response
+            if (!response || response.status !== 200 || response.type !== 'basic') {
+              return response;
+            }
+
+            // Clone the response
+            const responseToCache = response.clone();
+
+            caches.open(CACHE_NAME)
+              .then(cache => {
+                cache.put(event.request, responseToCache);
+              });
+
+            return response;
+          });
+      })
+  );
+});
+
+// Push notification event
+self.addEventListener('push', function(event) {
+  if (event.data) {
+    const data = event.data.json();
+    const options = {
+      body: data.body,
+      icon: '/logo192.png',
+      badge: '/logo192.png',
+      data: {
+        url: data.url
+      }
+    };
+
+    event.waitUntil(
+      self.registration.showNotification(data.title, options)
+    );
+  }
+});
+
+// Notification click event
+self.addEventListener('notificationclick', function(event) {
+  event.notification.close();
+  
+  event.waitUntil(
+    clients.openWindow(event.notification.data.url)
+  );
+});
+
+// Background Sync for offline actions
+self.addEventListener('sync', function(event) {
+  if (event.tag === 'sync-actions') {
+    event.waitUntil(syncOfflineActions());
+  }
+});
+
+async function syncOfflineActions() {
+  try {
+    const db = await openDB();
+    const actions = await db.getAll('offlineActions');
+    
+    for (const action of actions) {
+      try {
+        const response = await fetch(action.url, {
+          method: action.method,
+          headers: action.headers,
+          body: action.body ? JSON.stringify(action.body) : undefined
+        });
+
+        if (response.ok) {
+          // Remove the action from the queue if successful
+          await db.delete('offlineActions', action.id);
+        }
+      } catch (error) {
+        console.error('Error syncing action:', error);
+      }
+    }
+  } catch (error) {
+    console.error('Error accessing IndexedDB:', error);
+  }
+}
+
+// Helper function to open IndexedDB
+function openDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('newsAppDB', 1);
+    
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => resolve(request.result);
+    
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('offlineActions')) {
+        db.createObjectStore('offlineActions', { keyPath: 'id', autoIncrement: true });
+      }
+    };
+  });
+}
 
 // Any other custom service worker logic can go here.

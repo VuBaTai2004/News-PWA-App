@@ -4,6 +4,7 @@ const { check, validationResult } = require('express-validator');
 const auth = require('../middleware/auth');
 const News = require('../models/News');
 const mongoose = require('mongoose');
+const notificationService = require('../services/notificationService');
 
 // @route   GET api/news
 // @desc    Get all news articles
@@ -144,12 +145,30 @@ router.post('/', [
       category,
       image,
       featured: featured || false,
-      author: req.user.id
+      author: req.user.id,
+      publishTime: new Date().toISOString(),
+      readTime: '5 min', // You might want to calculate this based on content length
+      views: 0,
+      likes: 0
     });
 
     const newNews = await news.save();
+
+    // Send push notification to all subscribers
+    try {
+      await notificationService.sendNotification(
+        'New Article Published',
+        title,
+        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/news/${newNews._id}`
+      );
+    } catch (notificationError) {
+      console.error('Error sending notification:', notificationError);
+      // Don't fail the request if notification fails
+    }
+
     res.status(201).json(newNews);
   } catch (err) {
+    console.error('Error creating news:', err);
     res.status(400).json({ message: err.message });
   }
 });

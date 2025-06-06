@@ -95,7 +95,7 @@ const News = () => {
         }
 
         const response = await fetch(
-          `http://localhost:5000/api/news${selectedCategory !== 'all' ? `?category=${selectedCategory}` : ''}`
+          `https://skii36.io.vn/api/news${selectedCategory !== 'all' ? `?category=${selectedCategory}` : ''}`
         );
         
         if (!response.ok) {

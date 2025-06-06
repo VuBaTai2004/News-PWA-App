@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { offlineService } from '../services/offlineService';
+import { newsDB } from '../services/db';
 import './Comments.css';
 
 const Comments = ({ articleId }) => {
@@ -7,23 +8,74 @@ const Comments = ({ articleId }) => {
   const [newComment, setNewComment] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [isOffline, setIsOffline] = useState(!navigator.onLine);
+  const [offlineServiceInitialized, setOfflineServiceInitialized] = useState(false);
 
   useEffect(() => {
-    fetchComments();
-  }, [articleId]);
+    const initializeServices = async () => {
+      try {
+        // Initialize offline service
+        const initialized = await offlineService.init();
+        setOfflineServiceInitialized(initialized);
+        
+        // Initialize newsDB
+        await newsDB.init();
+      } catch (error) {
+        console.error('Error initializing services:', error);
+      }
+    };
+
+    initializeServices();
+
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (offlineServiceInitialized) {
+      fetchComments();
+    }
+  }, [articleId, offlineServiceInitialized]);
 
   const fetchComments = async () => {
     try {
-      const response = await fetch(`http://localhost:5000/api/news/${articleId}/comments`);
+      if (isOffline) {
+        // Try to get comments from IndexedDB
+        const cachedComments = await newsDB.getComments(articleId);
+        if (cachedComments) {
+          setComments(cachedComments);
+          setLoading(false);
+          return;
+        }
+      }
+
+      const response = await fetch(`https://skii36.io.vn/api/news/${articleId}/comments`);
       if (!response.ok) throw new Error('Failed to fetch comments');
       const data = await response.json();
       // Ensure we have an array of comments, even if empty
-      setComments(Array.isArray(data) ? data : []);
+      const commentsArray = Array.isArray(data) ? data : [];
+      setComments(commentsArray);
+      
+      // Cache comments in IndexedDB
+      await newsDB.saveComments(articleId, commentsArray);
+      
       setLoading(false);
     } catch (err) {
       console.error('Error fetching comments:', err);
-      setError(err.message);
-      setComments([]); // Set empty array on error
+      if (isOffline) {
+        // If offline and no cached comments, show empty state
+        setComments([]);
+      } else {
+        setError(err.message);
+      }
       setLoading(false);
     }
   };
@@ -34,11 +86,12 @@ const Comments = ({ articleId }) => {
 
     const commentData = {
       text: newComment,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      _id: Date.now().toString() // Temporary ID for offline mode
     };
 
     const action = {
-      url: `http://localhost:5000/api/news/${articleId}/comment`,
+      url: `https://skii36.io.vn/api/news/${articleId}/comment`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -48,11 +101,17 @@ const Comments = ({ articleId }) => {
 
     try {
       if (!navigator.onLine) {
+        if (!offlineServiceInitialized) {
+          throw new Error('Offline service not initialized');
+        }
         // Queue the action for background sync
         const queued = await offlineService.queueAction(action);
         if (queued) {
           // Update UI optimistically
-          setComments(prev => [...prev, { ...commentData, _id: Date.now() }]);
+          const updatedComments = [...comments, commentData];
+          setComments(updatedComments);
+          // Cache the updated comments
+          await newsDB.saveComments(articleId, updatedComments);
           setNewComment('');
           return;
         }
@@ -70,17 +129,22 @@ const Comments = ({ articleId }) => {
       const data = await response.json();
       // Ensure we have a valid comment object
       if (data && typeof data === 'object') {
-        setComments(prev => [...prev, data]);
+        const updatedComments = [...comments, data];
+        setComments(updatedComments);
+        // Cache the updated comments
+        await newsDB.saveComments(articleId, updatedComments);
       }
       setNewComment('');
     } catch (err) {
       console.error('Error posting comment:', err);
-      setError(err.message);
+      if (!isOffline) {
+        setError(err.message);
+      }
     }
   };
 
   if (loading) return <div className="loading">Loading comments...</div>;
-  if (error) return <div className="error">Error: {error}</div>;
+  if (error && !isOffline) return <div className="error">Error: {error}</div>;
 
   return (
     <div className="comments-section">

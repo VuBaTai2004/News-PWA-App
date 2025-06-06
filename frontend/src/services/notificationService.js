@@ -1,4 +1,3 @@
-
 class NotificationService {
   constructor() {
     this.serviceWorkerRegistration = null;
@@ -34,7 +33,7 @@ class NotificationService {
   async subscribeToPush() {
     try {
       // Get the VAPID public key from the server
-      const response = await fetch('http://localhost:5000/api/notifications/vapid-key');
+      const response = await fetch('https://skii36.io.vn/api/notifications/vapid-key');
       const { publicKey } = await response.json();
 
       const subscription = await this.serviceWorkerRegistration.pushManager.subscribe({
@@ -43,7 +42,7 @@ class NotificationService {
       });
 
       // Send subscription to backend
-      await fetch('http://localhost:5000/api/notifications/subscribe', {
+      await fetch('https://skii36.io.vn/api/notifications/subscribe', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

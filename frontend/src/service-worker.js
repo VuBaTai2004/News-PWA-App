@@ -255,45 +255,95 @@ self.addEventListener('sync', function(event) {
 async function syncOfflineActions() {
   try {
     const db = await openDB();
-    const actions = await db.getAll('offlineActions');
-    
-    for (const action of actions) {
-      try {
-        const response = await fetch(action.url, {
-          method: action.method,
-          headers: action.headers,
-          body: action.body ? JSON.stringify(action.body) : undefined
-        });
 
-        if (response.ok) {
-          await db.delete('offlineActions', action.id);
-          // Clear relevant caches after successful sync
-          if (action.url.includes('/api/comments') || action.url.includes('/api/likes')) {
-            await caches.delete('dynamic-content-cache');
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(['offlineActions'], 'readwrite'); // Use 'readwrite' for deleting items
+      const store = transaction.objectStore('offlineActions');
+      
+      const actions = [];
+      store.openCursor().onsuccess = async (event) => {
+        const cursor = event.target.result;
+        if (cursor) {
+          actions.push(cursor.value);
+          cursor.continue();
+        } else {
+          // No more entries
+          for (const action of actions) {
+            try {
+              const response = await fetch(action.url, {
+                method: action.method,
+                headers: action.headers,
+                body: action.body ? JSON.stringify(action.body) : undefined
+              });
+
+              if (response.ok) {
+                // Delete after successful sync
+                const deleteRequest = store.delete(action.id);
+                deleteRequest.onsuccess = () => console.log('Action deleted from IndexedDB:', action.id);
+                deleteRequest.onerror = (err) => console.error('Error deleting action from IndexedDB:', err);
+
+                // Clear relevant caches after successful sync
+                if (action.url.includes('/api/comments') || action.url.includes('/api/likes')) {
+                  await caches.delete('dynamic-content-cache');
+                }
+              } else {
+                console.error('Failed to sync action:', action, 'Status:', response.status);
+                // Optionally, handle specific non-OK responses (e.g., 404, 400)
+              }
+            } catch (error) {
+              console.error('Error syncing action:', error);
+              // Optionally, implement retry logic or move to a failed queue
+            }
           }
+          resolve(); // Resolve the promise after processing all actions
         }
-      } catch (error) {
-        console.error('Error syncing action:', error);
-      }
-    }
+      };
+
+      store.openCursor().onerror = (event) => {
+        console.error('Error opening cursor:', event.target.error);
+        reject(event.target.error);
+      };
+      
+      transaction.oncomplete = () => {
+        console.log('Sync transaction complete.');
+      };
+
+      transaction.onerror = (event) => {
+        console.error('Sync transaction failed:', event.target.error);
+        reject(event.target.error);
+      };
+      
+      transaction.onabort = (event) => {
+        console.error('Sync transaction aborted:', event.target.error);
+        reject(event.target.error);
+      };
+
+    });
+
   } catch (error) {
-    console.error('Error accessing IndexedDB:', error);
+    console.error('Error accessing IndexedDB for sync:', error);
   }
 }
 
 // Helper function to open IndexedDB
 function openDB() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('newsAppDB', 1);
+    const request = indexedDB.open('newsAppDB', 2);
     
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
     
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
+      // Create object store if it doesn't exist
       if (!db.objectStoreNames.contains('offlineActions')) {
         db.createObjectStore('offlineActions', { keyPath: 'id', autoIncrement: true });
+        console.log('offlineActions object store created/upgraded.');
       }
+      // Add other stores if needed for future versions
+      // if (!db.objectStoreNames.contains('otherStore')) {
+      //   db.createObjectStore('otherStore', { keyPath: 'id' });
+      // }
     };
   });
 }

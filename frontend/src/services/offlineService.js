@@ -2,6 +2,7 @@ class OfflineService {
   constructor() {
     this.serviceWorkerRegistration = null;
     this.db = null;
+    this.initialized = false;
   }
 
   async init() {
@@ -14,9 +15,11 @@ class OfflineService {
       this.serviceWorkerRegistration = await navigator.serviceWorker.ready;
       // Initialize the database
       await this.openDB();
+      this.initialized = true;
       return true;
     } catch (error) {
       console.error('Error initializing offline service:', error);
+      this.initialized = false;
       return false;
     }
   }
@@ -25,8 +28,11 @@ class OfflineService {
     if (!navigator.onLine) {
       try {
         // Ensure database is initialized
-        if (!this.db) {
-          await this.openDB();
+        if (!this.initialized || !this.db) {
+          const initialized = await this.init();
+          if (!initialized) {
+            throw new Error('Failed to initialize offline service');
+          }
         }
 
         const transaction = this.db.transaction(['offlineActions'], 'readwrite');
@@ -79,6 +85,7 @@ class OfflineService {
       // Close existing connection if any
       if (this.db) {
         this.db.close();
+        this.db = null;
       }
 
       const request = indexedDB.open('newsAppDB', 2);
@@ -112,6 +119,7 @@ class OfflineService {
       this.db.close();
       this.db = null;
     }
+    this.initialized = false;
   }
 }
 

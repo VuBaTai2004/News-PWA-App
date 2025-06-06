@@ -20,7 +20,10 @@ const NewsArticle = () => {
     const initServices = async () => {
       try {
         await newsDB.init();
-        await offlineService.init();
+        const offlineInitialized = await offlineService.init();
+        if (!offlineInitialized) {
+          console.warn('Offline service initialization failed');
+        }
       } catch (err) {
         console.error('Error initializing services:', err);
       }
@@ -29,7 +32,13 @@ const NewsArticle = () => {
     initServices();
 
     // Handle online/offline status
-    const handleOnline = () => setIsOffline(false);
+    const handleOnline = () => {
+      setIsOffline(false);
+      // Re-initialize offline service when coming back online
+      offlineService.init().catch(err => {
+        console.error('Error re-initializing offline service:', err);
+      });
+    };
     const handleOffline = () => setIsOffline(true);
 
     window.addEventListener('online', handleOnline);
@@ -43,84 +52,111 @@ const NewsArticle = () => {
 
   useEffect(() => {
     const fetchArticle = async () => {
+      setLoading(true); // Set loading to true at the start of fetch
+      setError(null); // Clear previous errors
+
       try {
         // Reset view tracking when article ID changes
         viewTracked.current = false;
-        
+
         // Ensure database is initialized
         if (!newsDB.db) {
           await newsDB.init();
         }
 
-        if (isOffline) {
-          // Load from IndexedDB when offline
-          const cachedArticle = await newsDB.getArticle(id);
-          if (cachedArticle) {
-            setArticle(cachedArticle);
-            // Check if article was liked
-            const isLiked = await newsDB.isArticleLiked(id);
-            setLiked(isLiked);
-            setLoading(false);
-            return;
-          }
-          throw new Error('Article not available offline');
-        }
+        let fetchedArticle = null;
+        let fetchError = null;
 
-        const response = await fetch(`http://localhost:5000/api/news/${id}`);
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.message || 'Failed to fetch article');
-        }
-        
-        // Cache the article in IndexedDB
-        await newsDB.saveArticle(data);
-        
-        // Check if article was liked
-        const isLiked = await newsDB.isArticleLiked(id);
-        setLiked(isLiked);
-        
-        setArticle(data);
-        setLoading(false);
-
-        // Track view only if it hasn't been tracked yet
-        if (navigator.onLine && !viewTracked.current) {
+        if (navigator.onLine) {
           try {
-            const viewResponse = await fetch(`http://localhost:5000/api/news/${id}/view`, {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json'
-              }
-            });
+            // Attempt to fetch from network first when online
+            console.log('Attempting to fetch article from network...');
+            const response = await fetch(`/api/news/${id}`);
+            const data = await response.json();
 
-            if (viewResponse.ok) {
-              const viewData = await viewResponse.json();
-              // Update the article's view count
-              setArticle(prev => ({
-                ...prev,
-                views: viewData.views
-              }));
-              viewTracked.current = true;
+            if (!response.ok) {
+              fetchError = data.message || 'Failed to fetch article from network';
+              console.error('Network fetch failed:', fetchError);
+            } else {
+              fetchedArticle = data;
+              // Cache the article in IndexedDB
+              await newsDB.saveArticle(fetchedArticle);
+              console.log('Article fetched from network and cached.');
             }
           } catch (err) {
-            console.error('Error tracking view:', err);
+            fetchError = 'Network request failed: ' + err.message;
+            console.error('Network request failed:', err);
           }
         }
+
+        if (!fetchedArticle) {
+          // If network fetch failed or offline, try to load from IndexedDB
+          console.log('Attempting to load article from cache...');
+          const cachedArticle = await newsDB.getArticle(id);
+          if (cachedArticle) {
+            fetchedArticle = cachedArticle;
+            console.log('Article loaded from cache.');
+          } else if (fetchError) {
+            // If there was a network error and no cache, set the network error
+            setError(fetchError);
+          } else {
+            // If offline and no cache
+            setError('Article not available offline.');
+          }
+        }
+
+        if (fetchedArticle) {
+          setArticle(fetchedArticle);
+
+          // Check if article was liked (use latest state if available, otherwise cached)
+          const isLiked = await newsDB.isArticleLiked(id);
+          setLiked(isLiked);
+
+          // Track view only if online and it hasn't been tracked yet
+          if (navigator.onLine && !viewTracked.current) {
+            try {
+              const viewResponse = await fetch(`/api/news/${id}/view`, {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (viewResponse.ok) {
+                const viewData = await viewResponse.json();
+                // Update the article's view count optimistically or from response
+                setArticle(prev => ({
+                  ...prev,
+                  views: viewData.views !== undefined ? viewData.views : (prev?.views || 0) + 1 // Optimistic update fallback
+                }));
+                viewTracked.current = true;
+                console.log('View tracked successfully.');
+              } else {
+                 console.warn('Failed to track view, status:', viewResponse.status);
+              }
+            } catch (err) {
+              console.error('Error tracking view:', err);
+            }
+          }
+        }
+
+        setLoading(false);
+
       } catch (err) {
-        console.error('Error fetching article:', err);
+        console.error('Error during article fetch process:', err);
         setError(err.message);
         setLoading(false);
       }
     };
 
     fetchArticle();
-  }, [id, isOffline]);
+  }, [id]); // Removed isOffline from dependency array to trigger fetch on ID change regardless of offline state
 
   const handleLike = async () => {
     try {
       const endpoint = liked ? 'unlike' : 'like';
       const action = {
-        url: `http://localhost:5000/api/news/${id}/${endpoint}`,
+        url: `/api/news/${id}/${endpoint}`,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

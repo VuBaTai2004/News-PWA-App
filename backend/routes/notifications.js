@@ -26,7 +26,7 @@ router.post('/send-test', async (req, res) => {
     await notificationService.sendNotification(
       title || 'New Article Available',
       body || 'Check out our latest article!',
-      url || 'http://localhost:3000'
+      url || 'https://skii36.io.vn'
     );
     res.json({ message: 'Test notification sent successfully' });
   } catch (error) {

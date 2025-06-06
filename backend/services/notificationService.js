@@ -3,7 +3,7 @@ const Subscription = require('../models/Subscription');
 
 // Configure web-push with your VAPID keys
 webpush.setVapidDetails(
-  'mailto:your-email@example.com',
+  'mailto:quanpham0405@gmail.com',
   process.env.VAPID_PUBLIC_KEY,
   process.env.VAPID_PRIVATE_KEY
 );

@@ -159,7 +159,7 @@ router.post('/', [
       await notificationService.sendNotification(
         'New Article Published',
         title,
-        `${process.env.FRONTEND_URL || 'http://localhost:3000'}/news/${newNews._id}`
+        `${process.env.FRONTEND_URL || 'https://skii36.io.vn'}/news/${newNews._id}`
       );
     } catch (notificationError) {
       console.error('Error sending notification:', notificationError);

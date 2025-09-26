@@ -1,4 +1,4 @@
-# DeployWebTest
+# News PWA Web
 
 A full-stack web application with a React frontend and Node.js/Express backend, featuring Progressive Web App (PWA) capabilities.
 
